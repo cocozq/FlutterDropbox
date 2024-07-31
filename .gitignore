@@ -5,5 +5,6 @@
 .pub/
 
 build/
+.idea/
 
 example/dropbox_key.py

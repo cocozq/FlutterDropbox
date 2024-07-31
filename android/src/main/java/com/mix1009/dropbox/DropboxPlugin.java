@@ -152,8 +152,8 @@ public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, Activity
       String clientId = call.argument("clientId");
       String key = call.argument("key");
       String secret = call.argument("secret");
-      this.clientId = clientId;
-      this.appInfo = new DbxAppInfo(key, secret);
+      DropboxPlugin.clientId = clientId;
+      appInfo = new DbxAppInfo(key, secret);
 
       sDbxRequestConfig = DbxRequestConfig.newBuilder(clientId)
               .withHttpRequestor(new OkHttp3Requestor(OkHttp3Requestor.defaultOkHttpClient()))
@@ -162,7 +162,7 @@ public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, Activity
       result.success(true);
 
     } else if (call.method.equals("authorizePKCE")) {
-      sDbxRequestConfig = DbxRequestConfig.newBuilder(this.clientId)
+      sDbxRequestConfig = DbxRequestConfig.newBuilder(clientId)
               .withHttpRequestor(new OkHttp3Requestor(OkHttp3Requestor.defaultOkHttpClient()))
               .build();
       Auth.startOAuth2PKCE(DropboxPlugin.activity , appInfo.getKey(),sDbxRequestConfig);
@@ -175,19 +175,19 @@ public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, Activity
     } else if (call.method.equals("authorizeWithAccessToken")) {
       String argAccessToken = call.argument("accessToken");
 
-      sDbxRequestConfig = DbxRequestConfig.newBuilder(this.clientId)
+      sDbxRequestConfig = DbxRequestConfig.newBuilder(clientId)
               .withHttpRequestor(new OkHttp3Requestor(OkHttp3Requestor.defaultOkHttpClient()))
               .build();
 
       client = new DbxClientV2(sDbxRequestConfig, argAccessToken);
 
-      this.accessToken = argAccessToken;
+      accessToken = argAccessToken;
       result.success(true);
 
     } else if (call.method.equals("authorizeWithCredentials")) {
       String argCredentials = call.argument("credentials");
       // now de-serialize credentials
-      sDbxRequestConfig = DbxRequestConfig.newBuilder(this.clientId)
+      sDbxRequestConfig = DbxRequestConfig.newBuilder(clientId)
               .withHttpRequestor(new OkHttp3Requestor(OkHttp3Requestor.defaultOkHttpClient()))
               .build();
       DbxCredential creds;
@@ -198,7 +198,7 @@ public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, Activity
          throw new IllegalStateException("Credential data corrupted: " + e.getMessage());
        }    
 
-      this.credentials = creds;
+      credentials = creds;
       result.success(true);
 
     } else if (call.method.equals("getAuthorizeUrl")) {
@@ -282,7 +282,7 @@ public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, Activity
     }
   }
 
-  class FinishAuthTask extends AsyncTask<String, Void, String> {
+  static class FinishAuthTask extends AsyncTask<String, Void, String> {
     DbxWebAuth webAuth;
     Result result;
     String code;
@@ -318,7 +318,7 @@ public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, Activity
     }
   }
 
-  class GetAccountNameTask extends AsyncTask<String, Void, String> {
+  static class GetAccountNameTask extends AsyncTask<String, Void, String> {
     Result result;
 
     private GetAccountNameTask(Result _result) {
