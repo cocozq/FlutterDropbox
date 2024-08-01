@@ -1,5 +1,6 @@
 package com.mix1009.dropbox;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
@@ -60,17 +61,22 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 
 /** DropboxPlugin */
 public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, ActivityAware {
   private static final String CHANNEL_NAME = "dropbox";
+  @SuppressLint("StaticFieldLeak")
   private static Activity activity;
   private MethodChannel channel;
+  private ExecutorService executorService;
 
   @Override
   public void onAttachedToEngine(@NonNull FlutterPluginBinding binding) {
-    setupChannel(binding.getFlutterEngine().getDartExecutor(), binding.getApplicationContext());
+    setupChannel(binding.getBinaryMessenger(), binding.getApplicationContext());
   }
 
   @Override
@@ -101,6 +107,7 @@ public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, Activity
   public void onAttachedToActivity(ActivityPluginBinding binding)
   {
     DropboxPlugin.activity = binding.getActivity();
+    executorService = Executors.newFixedThreadPool(1);
   }
 
   @Override
@@ -131,13 +138,13 @@ public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, Activity
       String authToken = Auth.getOAuth2Token();
 
       if (authToken != null) {
-        sDbxRequestConfig = DbxRequestConfig.newBuilder(this.clientId)
+        sDbxRequestConfig = DbxRequestConfig.newBuilder(clientId)
                 .withHttpRequestor(new OkHttp3Requestor(OkHttp3Requestor.defaultOkHttpClient()))
                 .build();
 
         client = new DbxClientV2(sDbxRequestConfig, authToken);
 
-        this.accessToken = authToken;
+        accessToken = authToken;
         return true;
       }
       result.error("error", "client not logged in", null);
@@ -155,7 +162,7 @@ public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, Activity
       DropboxPlugin.clientId = clientId;
       appInfo = new DbxAppInfo(key, secret);
 
-      sDbxRequestConfig = DbxRequestConfig.newBuilder(clientId)
+      sDbxRequestConfig = DbxRequestConfig.newBuilder(Objects.requireNonNull(clientId))
               .withHttpRequestor(new OkHttp3Requestor(OkHttp3Requestor.defaultOkHttpClient()))
               .build();
 
@@ -179,7 +186,7 @@ public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, Activity
               .withHttpRequestor(new OkHttp3Requestor(OkHttp3Requestor.defaultOkHttpClient()))
               .build();
 
-      client = new DbxClientV2(sDbxRequestConfig, argAccessToken);
+      client = new DbxClientV2(sDbxRequestConfig, Objects.requireNonNull(argAccessToken));
 
       accessToken = argAccessToken;
       result.success(true);
@@ -222,14 +229,10 @@ public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, Activity
 
     } else if (call.method.equals("finishAuth")) {
       String code = call.argument("code");
-      (new FinishAuthTask(webAuth, result, code)).execute("");
-
-
+      finishAuth(webAuth, result, code);
     } else if (call.method.equals("getAccountName")) {
-
       if (!checkClient(result)) return;
-      (new GetAccountNameTask(result)).execute("");
-
+      getAccountName(result);
     } else if (call.method.equals("listFolder")) {
       String path = call.argument("path");
 
@@ -282,67 +285,77 @@ public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, Activity
     }
   }
 
-  static class FinishAuthTask extends AsyncTask<String, Void, String> {
-    DbxWebAuth webAuth;
-    Result result;
-    String code;
-
-    private FinishAuthTask(DbxWebAuth _webAuth, Result _result, String _code) {
-      webAuth = _webAuth;
-      result = _result;
-      code = _code;
-    }
-    @Override
-    protected String doInBackground(String... urls) {
-
+  void finishAuth(DbxWebAuth webAuth, Result result, String code) {
+    executorService.submit(() -> {
+      String accessToken = "";
       DbxAuthFinish authFinish;
       try {
         authFinish = webAuth.finishFromCode(code);
+        accessToken = authFinish.getAccessToken();
+        DropboxPlugin.client = new DbxClientV2(DropboxPlugin.sDbxRequestConfig, accessToken);
+        DropboxPlugin.accessToken = accessToken;
       } catch (DbxException ex) {
         System.err.println("Error in DbxWebAuth.authorize: " + ex.getMessage());
-        return "";
       }
 
-      String accessToken = authFinish.getAccessToken();
-
-      DropboxPlugin.client = new DbxClientV2(DropboxPlugin.sDbxRequestConfig, accessToken);
-      DropboxPlugin.accessToken = accessToken;
-
-      return accessToken;
+      result.success(accessToken);
+    });
   }
 
-    @Override
-    protected void onPostExecute(String r) {
-      super.onPostExecute(r);
-      result.success(r);
-    }
-  }
-
-  static class GetAccountNameTask extends AsyncTask<String, Void, String> {
-    Result result;
-
-    private GetAccountNameTask(Result _result) {
-      result = _result;
-    }
-    @Override
-    protected String doInBackground(String... urls) {
-
+  void getAccountName(Result result) {
+    executorService.submit(() -> {
+      String name = "";
       FullAccount account = null;
       try {
         account = DropboxPlugin.client.users().getCurrentAccount();
+        name = account.getName().getDisplayName();
+      } catch (DbxException e) {
+        e.printStackTrace();
+        name = e.getMessage();
+      }
+
+      result.success(name);
+    });
+  }
+
+  void listFolder(Result result, String path) {
+    executorService.submit(() -> {
+      List<Map<String, Object>> paths = new ArrayList<>();
+      ListFolderResult listFolderResult = null;
+      try {
+        listFolderResult = DropboxPlugin.client.files().listFolder(path);
+        String pattern = "yyyyMMdd HHmmss";
+        @SuppressLint("SimpleDateFormat") DateFormat df = new SimpleDateFormat(pattern);
+
+        while (true) {
+
+          for (Metadata metadata : listFolderResult.getEntries()) {
+            Map<String, Object> map = new HashMap<>();
+            map.put("name", metadata.getName());
+            map.put("pathLower", metadata.getPathLower());
+            map.put("pathDisplay", metadata.getPathDisplay());
+
+            if (metadata instanceof FileMetadata) {
+              FileMetadata fileMetadata = (FileMetadata) metadata;
+              map.put("filesize", fileMetadata.getSize());
+              map.put("clientModified", df.format(fileMetadata.getClientModified()));
+              map.put("serverModified", df.format(fileMetadata.getServerModified()));
+            }
+
+            paths.add(map);
+          }
+
+          if (!listFolderResult.getHasMore()) {
+            break;
+          }
+
+          listFolderResult = DropboxPlugin.client.files().listFolderContinue(listFolderResult.getCursor());
+        }
       } catch (DbxException e) {
         e.printStackTrace();
         return e.getMessage();
       }
-      String name = account.getName().getDisplayName();
-      return name;
-    }
-
-    @Override
-    protected void onPostExecute(String r) {
-      super.onPostExecute(r);
-      result.success(r);
-    }
+    });
   }
 
   class ListFolderTask extends AsyncTask<String, Void, String> {
