@@ -458,7 +458,7 @@ public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, Activity
               ret.add(fileSize);
               channel.invokeMethod("progress", ret, null);
             }
-          })
+          });
         });
 
       } catch (FileNotFoundException e) {
