@@ -28,7 +28,6 @@ import com.dropbox.core.DbxRequestConfig;
 import com.dropbox.core.DbxWebAuth;
 import com.dropbox.core.android.Auth;
 import com.dropbox.core.android.AuthActivity;
-import com.dropbox.core.util.IOUtil;
 import com.dropbox.core.v2.DbxClientV2;
 import com.dropbox.core.v2.files.FileMetadata;
 import com.dropbox.core.v2.files.GetTemporaryLinkResult;
@@ -408,21 +407,15 @@ public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, Activity
 
         uploadBuilder = client.files().uploadBuilder(dropboxPath).withMode(WriteMode.OVERWRITE).withAutorename(true).withMute(false);
 
-        uploadBuilder.uploadAndFinish(in, new IOUtil.ProgressListener() {
-          @Override
-          public void onProgress(long bytesWritten) {
-            final long written = bytesWritten;
-            new Handler(Looper.getMainLooper()).post(new Runnable () {
-              @Override
-              public void run () {
-                // MUST RUN ON MAIN THREAD !
-                List<Long> ret = new ArrayList<Long>();
-                ret.add(key);
-                ret.add(written);
-                channel.invokeMethod("progress", ret, null);
-              }
-            });
-          }
+        uploadBuilder.uploadAndFinish(in, bytesWritten -> {
+          final long written = bytesWritten;
+          new Handler(Looper.getMainLooper()).post(() -> {
+            // MUST RUN ON MAIN THREAD !
+            List<Long> ret = new ArrayList<Long>();
+            ret.add(key);
+            ret.add(written);
+            channel.invokeMethod("progress", ret, null);
+          });
         });
       } catch (Exception e) {
         e.printStackTrace();
@@ -448,16 +441,13 @@ public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, Activity
         OutputStream out = new FileOutputStream(filePath);
         downloader.download(out, bytesRead -> {
           final long read = bytesRead;
-          new Handler(Looper.getMainLooper()).post(new Runnable() {
-            @Override
-            public void run() {
-              // MUST RUN ON MAIN THREAD !
-              List<Long> ret = new ArrayList<>();
-              ret.add(key);
-              ret.add(read);
-              ret.add(fileSize);
-              channel.invokeMethod("progress", ret, null);
-            }
+          new Handler(Looper.getMainLooper()).post(() -> {
+            // MUST RUN ON MAIN THREAD !
+            List<Long> ret = new ArrayList<>();
+            ret.add(key);
+            ret.add(read);
+            ret.add(fileSize);
+            channel.invokeMethod("progress", ret, null);
           });
         });
 
