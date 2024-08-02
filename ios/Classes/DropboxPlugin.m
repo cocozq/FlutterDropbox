@@ -164,6 +164,19 @@ FlutterMethodChannel* channel;
         }
       }];
 
+  } else if ([@"remove" isEqualToString:call.method]) {
+      NSString *path = call.arguments[@"path"];
+      DBUserClient *client = [DBClientsManager authorizedClient];
+      
+      [[client.filesRoutes delete_V2:path] setResponseBlock:^(DBFILESDeleteResult * _Nullable dResult, DBFILESDeleteError * _Nullable routeError, DBRequestError * _Nullable networkError) {
+          if (dResult) {
+              result(@(YES));
+          }
+          else {
+              result(@(NO));
+          }
+      }];
+
   } else if ([@"getAccessToken" isEqualToString:call.method]) {
       DBUserClient *client = [DBClientsManager authorizedClient];
       result(client.accessToken);

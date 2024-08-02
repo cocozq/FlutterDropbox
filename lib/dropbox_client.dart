@@ -122,6 +122,13 @@ class Dropbox {
     return await _channel.invokeMethod('listFolder', {'path': path});
   }
 
+  /// remove folder/file for path.
+  ///
+  /// returns List<dynamic>. Use path='' for accessing root folder. List items are not sorted.
+  static Future remove(String path) async {
+    return await _channel.invokeMethod('remove', {'path': path});
+  }
+
   /// get temporary link url for file
   ///
   /// returns url for accessing dropbox file.
