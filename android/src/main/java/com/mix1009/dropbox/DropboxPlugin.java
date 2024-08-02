@@ -3,12 +3,9 @@ package com.mix1009.dropbox;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Context;
-import android.content.Intent;
-import android.os.AsyncTask;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.StrictMode;
-import android.util.Log;
+import android.util.Base64;
 
 import androidx.annotation.NonNull;
 import io.flutter.embedding.engine.plugins.FlutterPlugin;
@@ -33,14 +30,9 @@ import com.dropbox.core.android.Auth;
 import com.dropbox.core.android.AuthActivity;
 import com.dropbox.core.util.IOUtil;
 import com.dropbox.core.v2.DbxClientV2;
-import com.dropbox.core.v2.auth.DbxUserAuthRequests;
-import com.dropbox.core.v2.files.DownloadBuilder;
 import com.dropbox.core.v2.files.FileMetadata;
-import com.dropbox.core.v2.files.FolderMetadata;
 import com.dropbox.core.v2.files.GetTemporaryLinkResult;
 import com.dropbox.core.v2.files.ListFolderResult;
-import com.dropbox.core.v2.files.MediaInfo;
-import com.dropbox.core.v2.files.MediaMetadata;
 import com.dropbox.core.v2.files.Metadata;
 import com.dropbox.core.v2.files.UploadBuilder;
 import com.dropbox.core.v2.files.WriteMode;
@@ -57,7 +49,6 @@ import java.io.OutputStream;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -73,6 +64,7 @@ public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, Activity
   private static Activity activity;
   private MethodChannel channel;
   private ExecutorService executorService;
+  private long fileSize = 0;
 
   @Override
   public void onAttachedToEngine(@NonNull FlutterPluginBinding binding) {
@@ -237,29 +229,33 @@ public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, Activity
       String path = call.argument("path");
 
       if (!checkClient(result)) return;
-      (new ListFolderTask(result)).execute(path);
+      listFolder(result, path);
+    } else if (call.method.equals("remove")) {
+      String path = call.argument("path");
 
+      if (!checkClient(result)) return;
+      remove(result, path);
     } else if (call.method.equals("getTemporaryLink")) {
       String path = call.argument("path");
 
       if (!checkClient(result)) return;
-      (new TemporaryLinkTask(result)).execute(path);
+      temporaryLink(result, path);
     } else if (call.method.equals("getThumbnailBase64String")) {
       String path = call.argument("path");
 
       if (!checkClient(result)) return;
-      (new ThumbnailBase64StringTask(result)).execute(path);
+      thumbnailBase64String(result, path);
     } else if (call.method.equals("getAccessToken")) {
 //      result.success(accessToken);
       String token = Auth.getOAuth2Token();
       if (token == null) {
-        token = this.accessToken;
+        token = accessToken;
       }
       result.success(token);
     } else if (call.method.equals("getCredentials")) {
       DbxCredential myCred = Auth.getDbxCredential();
       if (myCred == null) {
-        myCred = this.credentials;
+        myCred = credentials;
       }
       String credString = myCred != null ? myCred.toString() : null;
       result.success(credString);
@@ -270,16 +266,14 @@ public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, Activity
       int key = call.argument("key");
 
       if (!checkClient(result)) return;
-      (new UploadTask(channel, key, result)).execute(filepath, dropboxpath);
-
+      upload(result, channel, key, filepath, dropboxpath);
     } else if (call.method.equals("download")) {
       String filepath = call.argument("filepath");
       String dropboxpath = call.argument("dropboxpath");
       int key = call.argument("key");
 
       if (!checkClient(result)) return;
-      (new DownloadTask(channel, key, result)).execute(dropboxpath, filepath);
-
+      download(result, channel, key, dropboxpath, filepath);
     } else {
       result.notImplemented();
     }
@@ -310,7 +304,6 @@ public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, Activity
         account = DropboxPlugin.client.users().getCurrentAccount();
         name = account.getName().getDisplayName();
       } catch (DbxException e) {
-        e.printStackTrace();
         name = e.getMessage();
       }
 
@@ -321,7 +314,7 @@ public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, Activity
   void listFolder(Result result, String path) {
     executorService.submit(() -> {
       List<Map<String, Object>> paths = new ArrayList<>();
-      ListFolderResult listFolderResult = null;
+      ListFolderResult listFolderResult;
       try {
         listFolderResult = DropboxPlugin.client.files().listFolder(path);
         String pattern = "yyyyMMdd HHmmss";
@@ -353,258 +346,134 @@ public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, Activity
         }
       } catch (DbxException e) {
         e.printStackTrace();
-        return e.getMessage();
       }
+
+      result.success(paths);
     });
   }
 
-  class ListFolderTask extends AsyncTask<String, Void, String> {
-    Result result;
-    List<Object> paths = new ArrayList<>();
-
-    private ListFolderTask(Result _result) {
-      result = _result;
-    }
-
-    @Override
-    protected String doInBackground(String... argPaths) {
-
-      ListFolderResult listFolderResult = null;
+  void remove(Result result, String path) {
+    executorService.submit(() -> {
+      boolean res = false;
       try {
-        listFolderResult = DropboxPlugin.client.files().listFolder(argPaths[0]);
-        String pattern = "yyyyMMdd HHmmss";
-        DateFormat df = new SimpleDateFormat(pattern);
-
-        while (true) {
-
-          for (Metadata metadata : listFolderResult.getEntries()) {
-            Map<String, Object> map = new HashMap<>();
-            map.put("name", metadata.getName());
-            map.put("pathLower", metadata.getPathLower());
-            map.put("pathDisplay", metadata.getPathDisplay());
-
-            if (metadata instanceof FileMetadata) {
-              FileMetadata fileMetadata = (FileMetadata) metadata;
-              map.put("filesize", fileMetadata.getSize());
-              map.put("clientModified", df.format(fileMetadata.getClientModified()));
-              map.put("serverModified", df.format(fileMetadata.getServerModified()));
-//            } else if (metadata instanceof FolderMetadata){
-//              FolderMetadata folderMetadata = (FolderMetadata) metadata;
-
-
-            }
-
-            paths.add(map);
-//            paths.add(metadata.getPathLower());
-          }
-
-          if (!listFolderResult.getHasMore()) {
-            break;
-          }
-
-          listFolderResult = DropboxPlugin.client.files().listFolderContinue(listFolderResult.getCursor());
-        }
+        client.files().deleteV2(path);
+        res = true;
       } catch (DbxException e) {
         e.printStackTrace();
-        return e.getMessage();
       }
 
-      return "";
-    }
-
-    @Override
-    protected void onPostExecute(String r) {
-      super.onPostExecute(r);
-      result.success(paths);
-    }
-
+      result.success(res);
+    });
   }
 
-  class TemporaryLinkTask extends AsyncTask<String, Void, String> {
-    Result result;
-
-    private TemporaryLinkTask(Result _result) {
-      result = _result;
-    }
-    @Override
-    protected String doInBackground(String... argPaths) {
-
-      GetTemporaryLinkResult linkResult = null;
+  void temporaryLink(Result result, String path) {
+    executorService.submit(() -> {
+      String link;
+      GetTemporaryLinkResult linkResult;
       try {
-        linkResult = DropboxPlugin.client.files().getTemporaryLink(argPaths[0]);
-
-        String link = linkResult.getLink();
-
-        return link;
+        linkResult = client.files().getTemporaryLink(path);
+        link = linkResult.getLink();
       } catch (DbxException e) {
-        e.printStackTrace();
-        return e.getMessage();
+        link = e.getMessage();
       }
-    }
-    @Override
-    protected void onPostExecute(String r) {
-      super.onPostExecute(r);
-      result.success(r);
-    }
+
+      result.success(link);
+    });
   }
 
-  class ThumbnailBase64StringTask extends AsyncTask<String, Void, String> {
-    Result result;
-
-    private ThumbnailBase64StringTask(Result _result) {
-      result = _result;
-    }
-    @Override
-    protected String doInBackground(String... argPaths) {
+  void thumbnailBase64String(Result result, String path) {
+    executorService.submit(() -> {
+      String res;
       try {
-        String path = argPaths[0];
-        DbxDownloader<FileMetadata> downloader = DropboxPlugin.client.files().getThumbnail(path);
+        DbxDownloader<FileMetadata> downloader = client.files().getThumbnail(path);
         ByteArrayOutputStream bo = new ByteArrayOutputStream();
         downloader.download(bo);
-        String encodedString = Base64.getEncoder().encodeToString(bo.toByteArray());
+        res = Base64.encodeToString(bo.toByteArray(), Base64.DEFAULT);
 
-        return encodedString;
-      } catch (DbxException e) {
+      } catch (Exception e) {
         e.printStackTrace();
-        return e.getMessage();
-      } catch (IOException e) {
-        e.printStackTrace();
-        return e.getMessage();
+        res = e.getMessage();
       }
-    }
-    @Override
-    protected void onPostExecute(String r) {
-      super.onPostExecute(r);
-      result.success(r);
-    }
+
+      result.success(res);
+    });
   }
 
-  class UploadTask extends AsyncTask<String, Void, String> {
-    Result result;
-    int key;
-    MethodChannel channel;
-    List<Object> paths = new ArrayList<>();
-
-    private UploadTask(MethodChannel _channel, int _key, Result _result) {
-      channel = _channel;
-      key = _key;
-      result = _result;
-    }
-
-    @Override
-    protected String doInBackground(String... argPaths) {
-
-      UploadBuilder uploadBuilder = null;
-        try {
-          InputStream in = new FileInputStream(argPaths[0]);
-
-          uploadBuilder = DropboxPlugin.client.files().uploadBuilder(argPaths[1]).withMode(WriteMode.OVERWRITE).withAutorename(true).withMute(false);
-
-          uploadBuilder.uploadAndFinish(in, new IOUtil.ProgressListener() {
-            @Override
-            public void onProgress(long bytesWritten) {
-              final long written = bytesWritten;
-              new Handler(Looper.getMainLooper()).post(new Runnable () {
-                @Override
-                public void run () {
-                  // MUST RUN ON MAIN THREAD !
-                  List<Long> ret = new ArrayList<Long>();
-                  ret.add((long)key);
-                  ret.add(written);
-                  channel.invokeMethod("progress", ret, null);
-                }
-              });
-
-            }
-          });
-
-        } catch (FileNotFoundException e) {
-          e.printStackTrace();
-          return e.getMessage();
-        } catch (IOException e) {
-          e.printStackTrace();
-        } catch (DbxException e) {
-        e.printStackTrace();
-        return e.getMessage();
-        }
-
-      return "";
-    }
-
-    @Override
-    protected void onPostExecute(String r) {
-      super.onPostExecute(r);
-      result.success(paths);
-    }
-
-  }
-
-  class DownloadTask extends AsyncTask<String, Void, String> {
-    Result result;
-    int key;
-    long fileSize;
-    MethodChannel channel;
-    List<Object> paths = new ArrayList<>();
-
-    private DownloadTask(MethodChannel _channel, int _key, Result _result) {
-      channel = _channel;
-      key = _key;
-      result = _result;
-    }
-
-    @Override
-    protected String doInBackground(String... argPaths) {
-
+  void upload(Result result, MethodChannel channel, long key, String filePath, String dropboxPath) {
+    executorService.submit(() -> {
+      String res = "";
+      UploadBuilder uploadBuilder;
       try {
-        fileSize = 0;
-        Metadata metadata = client.files().getMetadata(argPaths[0]);
+        InputStream in = new FileInputStream(filePath);
+
+        uploadBuilder = client.files().uploadBuilder(dropboxPath).withMode(WriteMode.OVERWRITE).withAutorename(true).withMute(false);
+
+        uploadBuilder.uploadAndFinish(in, new IOUtil.ProgressListener() {
+          @Override
+          public void onProgress(long bytesWritten) {
+            final long written = bytesWritten;
+            new Handler(Looper.getMainLooper()).post(new Runnable () {
+              @Override
+              public void run () {
+                // MUST RUN ON MAIN THREAD !
+                List<Long> ret = new ArrayList<Long>();
+                ret.add(key);
+                ret.add(written);
+                channel.invokeMethod("progress", ret, null);
+              }
+            });
+          }
+        });
+      } catch (Exception e) {
+        e.printStackTrace();
+        res = e.getMessage();
+      }
+
+      result.success(res);
+    });
+  }
+
+  void download(Result result, MethodChannel channel, long key, String dropboxPath, String filePath) {
+    executorService.submit(() -> {
+      String res = "";
+      try {
+        Metadata metadata = client.files().getMetadata(dropboxPath);
 
         if (metadata instanceof FileMetadata) {
           FileMetadata fileMetadata = (FileMetadata) metadata;
           fileSize = fileMetadata.getSize();
         }
 
-        DbxDownloader<FileMetadata> downloader = client.files().download(argPaths[0]);
-        OutputStream out = new FileOutputStream(argPaths[1]);
-        downloader.download(out, new IOUtil.ProgressListener() {
-          @Override
-          public void onProgress(long bytesRead) {
-            final long read = bytesRead;
-            new Handler(Looper.getMainLooper()).post(new Runnable () {
-              @Override
-              public void run () {
-                // MUST RUN ON MAIN THREAD !
-                List<Long> ret = new ArrayList<Long>();
-                ret.add((long)key);
-                ret.add(read);
-                ret.add(fileSize);
-                channel.invokeMethod("progress", ret, null);
-              }
-            });
-
-          }
+        DbxDownloader<FileMetadata> downloader = client.files().download(dropboxPath);
+        OutputStream out = new FileOutputStream(filePath);
+        downloader.download(out, bytesRead -> {
+          final long read = bytesRead;
+          new Handler(Looper.getMainLooper()).post(new Runnable() {
+            @Override
+            public void run() {
+              // MUST RUN ON MAIN THREAD !
+              List<Long> ret = new ArrayList<>();
+              ret.add(key);
+              ret.add(read);
+              ret.add(fileSize);
+              channel.invokeMethod("progress", ret, null);
+            }
+          })
         });
 
       } catch (FileNotFoundException e) {
         e.printStackTrace();
-        return e.getMessage();
-
+        res = e.getMessage();
       } catch (IOException e) {
         e.printStackTrace();
       } catch (DbxException e) {
         e.printStackTrace();
-        return e.getMessage();
+        res = e.getMessage();
       }
 
-      return "";
-    }
-
-      @Override
-    protected void onPostExecute(String r) {
-      super.onPostExecute(r);
-      result.success(paths);
-    }
-
+      result.success(res);
+    });
   }
+
 }
 
