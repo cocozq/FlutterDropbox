@@ -400,7 +400,7 @@ public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, Activity
 
   void upload(Result result, MethodChannel channel, long key, String filePath, String dropboxPath) {
     executorService.submit(() -> {
-      String res = "";
+      boolean res = false;
       UploadBuilder uploadBuilder;
       try {
         InputStream in = new FileInputStream(filePath);
@@ -411,15 +411,15 @@ public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, Activity
           final long written = bytesWritten;
           new Handler(Looper.getMainLooper()).post(() -> {
             // MUST RUN ON MAIN THREAD !
-            List<Long> ret = new ArrayList<Long>();
+            List<Long> ret = new ArrayList<>();
             ret.add(key);
             ret.add(written);
             channel.invokeMethod("progress", ret, null);
           });
         });
+        res = true;
       } catch (Exception e) {
         e.printStackTrace();
-        res = e.getMessage();
       }
 
       result.success(res);
@@ -428,7 +428,7 @@ public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, Activity
 
   void download(Result result, MethodChannel channel, long key, String dropboxPath, String filePath) {
     executorService.submit(() -> {
-      String res = "";
+      boolean res = false;
       try {
         Metadata metadata = client.files().getMetadata(dropboxPath);
 
@@ -450,15 +450,13 @@ public class DropboxPlugin implements FlutterPlugin, MethodCallHandler, Activity
             channel.invokeMethod("progress", ret, null);
           });
         });
-
+        res = true;
       } catch (FileNotFoundException e) {
         e.printStackTrace();
-        res = e.getMessage();
       } catch (IOException e) {
         e.printStackTrace();
       } catch (DbxException e) {
         e.printStackTrace();
-        res = e.getMessage();
       }
 
       result.success(res);
